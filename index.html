@@ -1,0 +1,1855 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SantriPay Admin - Sistem Keuangan Pesantren (Real-Time)</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      #printable-area, #printable-area * {
+        visibility: visible;
+      }
+      #printable-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        padding: 20px;
+        background: white;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
+  
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const DEFAULT_PESANTREN = {
+      nama: "Pondok Pesantren Al-Hidayah",
+      alamat: "Jl. Pendidikan Islam No. 45, Kebayoran, Jakarta",
+      telepon: "0812-3456-7890",
+      pimpinan: "KH. Ahmad Dahlan, M.Ag",
+      bendahara: "Ust. Muhammad Ridwan"
+    };
+
+    const DEFAULT_CONFIG = {
+      sppBulanan: 350000,
+      uangMakan: 400000,
+      uangKitab: 150000,
+      uangGedung: 500000
+    };
+
+    const DEFAULT_USERS = [
+      { id: 'u1', username: 'admin', password: 'admin123', role: 'admin', name: 'Bendahara Utama' },
+      { id: 'u2', username: 'ustazah', password: 'ustazah123', role: 'ustazah', name: 'Ustazah Fatimah (Pengajar)' }
+    ];
+
+    // URL Google Apps Script yang ditanamkan langsung secara default
+    const HARDCODED_GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbwXfwvJztnGU6tc7tfL0fFXlOPlXaDCPuq_1Av0Zp3qq5Zv0eD1EcYRBWcxYQ6-tBC6PQ/exec";
+
+    function App() {
+      const [users, setUsers] = useState(() => {
+        const saved = localStorage.getItem('santri_app_users');
+        return saved ? JSON.parse(saved) : DEFAULT_USERS;
+      });
+
+      const [currentUser, setCurrentUser] = useState(() => {
+        const saved = localStorage.getItem('santri_admin_user');
+        return saved ? JSON.parse(saved) : null;
+      });
+
+      const [pesantren, setPesantren] = useState(() => {
+        const saved = localStorage.getItem('santri_pesantren_info');
+        return saved ? JSON.parse(saved) : DEFAULT_PESANTREN;
+      });
+
+      const [configTagihan, setConfigTagihan] = useState(() => {
+        const saved = localStorage.getItem('santri_config_tagihan');
+        return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+      });
+
+      const [santriList, setSantriList] = useState(() => {
+        const saved = localStorage.getItem('santri_list_data');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [transaksiList, setTransaksiList] = useState(() => {
+        const saved = localStorage.getItem('santri_transaksi_data');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [googleSheetUrl, setGoogleSheetUrl] = useState(() => {
+        return localStorage.getItem('santri_google_sheet_url') || HARDCODED_GOOGLE_SHEET_URL;
+      });
+
+      const [lastSyncTime, setLastSyncTime] = useState(() => {
+        return localStorage.getItem('santri_last_sync_time') || null;
+      });
+
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [printedReceipt, setPrintedReceipt] = useState(null);
+      const [isSyncing, setIsSyncing] = useState(false);
+      const [selectedSantriForPayment, setSelectedSantriForPayment] = useState(null);
+      const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+      const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+      const showToast = (message, type = 'success') => {
+        setToast({ show: true, message, type });
+        setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3500);
+      };
+
+      useEffect(() => { localStorage.setItem('santri_app_users', JSON.stringify(users)); }, [users]);
+      useEffect(() => { localStorage.setItem('santri_admin_user', JSON.stringify(currentUser)); }, [currentUser]);
+      useEffect(() => { localStorage.setItem('santri_pesantren_info', JSON.stringify(pesantren)); }, [pesantren]);
+      useEffect(() => { localStorage.setItem('santri_config_tagihan', JSON.stringify(configTagihan)); }, [configTagihan]);
+      useEffect(() => { localStorage.setItem('santri_list_data', JSON.stringify(santriList)); }, [santriList]);
+      useEffect(() => { localStorage.setItem('santri_transaksi_data', JSON.stringify(transaksiList)); }, [transaksiList]);
+      useEffect(() => { localStorage.setItem('santri_google_sheet_url', googleSheetUrl); }, [googleSheetUrl]);
+
+      useEffect(() => {
+        const handleStorageChange = (e) => {
+          if (e.key === 'santri_list_data' && e.newValue) setSantriList(JSON.parse(e.newValue));
+          if (e.key === 'santri_transaksi_data' && e.newValue) setTransaksiList(JSON.parse(e.newValue));
+          if (e.key === 'santri_google_sheet_url' && e.newValue) setGoogleSheetUrl(e.newValue);
+        };
+        window.addEventListener('storage', handleStorageChange);
+
+        let bc;
+        if ('BroadcastChannel' in window) {
+          bc = new BroadcastChannel('santripay_live_channel');
+          bc.onmessage = (event) => {
+            if (event.data?.type === 'SYNC_DATA') {
+              const savedSantri = localStorage.getItem('santri_list_data');
+              if (savedSantri) setSantriList(JSON.parse(savedSantri));
+              const savedTx = localStorage.getItem('santri_transaksi_data');
+              if (savedTx) setTransaksiList(JSON.parse(savedTx));
+            }
+          };
+        }
+
+        return () => {
+          window.removeEventListener('storage', handleStorageChange);
+          if (bc) bc.close();
+        };
+      }, []);
+
+      const notifyLocalTabs = () => {
+        if ('BroadcastChannel' in window) {
+          const bc = new BroadcastChannel('santripay_live_channel');
+          bc.postMessage({ type: 'SYNC_DATA' });
+          bc.close();
+        }
+      };
+
+      const fetchCloudData = async (quiet = false) => {
+        if (!googleSheetUrl || !googleSheetUrl.trim()) return;
+        if (!quiet) setIsSyncing(true);
+        try {
+          const response = await fetch(googleSheetUrl);
+          if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+          const resData = await response.json();
+          if (resData && resData.status === 'success') {
+            if (Array.isArray(resData.santriList)) setSantriList(resData.santriList);
+            if (Array.isArray(resData.transaksiList)) setTransaksiList(resData.transaksiList);
+            const timeNow = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+            setLastSyncTime(timeNow);
+            localStorage.setItem('santri_last_sync_time', timeNow);
+            notifyLocalTabs();
+            if (!quiet) showToast('Data berhasil disinkronkan dari Cloud!', 'success');
+          }
+        } catch (err) {
+          console.warn("Cloud Fetch Notice:", err.message || err);
+        } finally {
+          if (!quiet) setIsSyncing(false);
+        }
+      };
+
+      useEffect(() => {
+        if (!currentUser) return;
+        fetchCloudData(true);
+        const autoSyncInterval = setInterval(() => {
+          fetchCloudData(true);
+        }, 4000); // Polling otomatis setiap 4 detik tanpa refresh
+
+        return () => clearInterval(autoSyncInterval);
+      }, [googleSheetUrl, currentUser]);
+
+      const syncToGoogleSheets = async (actionType, payloadData) => {
+        if (!googleSheetUrl || !googleSheetUrl.trim()) return;
+        setIsSyncing(true);
+        try {
+          await fetch(googleSheetUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: actionType, data: payloadData })
+          });
+          const timeNow = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+          setLastSyncTime(timeNow);
+          localStorage.setItem('santri_last_sync_time', timeNow);
+          notifyLocalTabs();
+          showToast('Tersimpan & tersinkron ke Cloud!', 'success');
+          setTimeout(() => fetchCloudData(true), 1000);
+        } catch (err) {
+          showToast('Data tersimpan secara lokal', 'info');
+        } finally {
+          setIsSyncing(false);
+        }
+      };
+
+      const handleLogin = (usernameInput, passwordInput) => {
+        const adminAccount = users.find(u => u.role === 'admin');
+        if (adminAccount && usernameInput.trim() === adminAccount.username && passwordInput === adminAccount.password) {
+          setCurrentUser(adminAccount);
+          showToast(`Selamat datang, ${adminAccount.name}!`, 'success');
+          return true;
+        } else {
+          showToast('Username atau password Admin salah!', 'error');
+          return false;
+        }
+      };
+
+      const handleLogout = () => {
+        setCurrentUser(null);
+        localStorage.removeItem('santri_admin_user');
+        showToast('Anda telah keluar dari aplikasi Admin', 'info');
+      };
+
+      const totalPemasukan = transaksiList
+        .filter(t => t.jenis === 'masuk')
+        .reduce((sum, t) => sum + Number(t.jumlah), 0);
+
+      const totalPengeluaran = transaksiList
+        .filter(t => t.jenis === 'keluar')
+        .reduce((sum, t) => sum + Number(t.jumlah), 0);
+
+      const saldoKas = totalPemasukan - totalPengeluaran;
+
+      const triggerPrintReceipt = (receiptData) => {
+        setPrintedReceipt(receiptData);
+        setTimeout(() => {
+          window.print();
+        }, 300);
+      };
+
+      const handleQuickPayFromTunggakan = (santri) => {
+        setSelectedSantriForPayment(santri);
+        setActiveTab('pembayaran');
+      };
+
+      const handleSelectTab = (tabId) => {
+        setActiveTab(tabId);
+        setIsMobileMenuOpen(false);
+      };
+
+      if (!currentUser) {
+        return <AdminLoginView onLogin={handleLogin} pesantren={pesantren} />;
+      }
+
+      return (
+        <div className="min-h-screen flex flex-col md:flex-row bg-slate-50">
+          
+          {toast.show && (
+            <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg border flex items-center space-x-3 transition-all transform duration-300 ${
+              toast.type === 'success' ? 'bg-emerald-900 text-white border-emerald-700' : 'bg-rose-900 text-white border-rose-700'
+            }`}>
+              <i className={`fa-solid ${toast.type === 'success' ? 'fa-circle-check text-emerald-400' : 'fa-triangle-exclamation text-rose-400'} text-lg`}></i>
+              <span className="text-sm font-medium">{toast.message}</span>
+            </div>
+          )}
+
+          {isMobileMenuOpen && (
+            <div 
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="fixed inset-0 bg-slate-950/70 z-40 md:hidden backdrop-blur-sm transition-opacity"
+            ></div>
+          )}
+
+          {/* Sidebar Admin Navigation */}
+          <aside className={`fixed md:static top-0 left-0 h-full z-50 w-64 bg-slate-900 text-slate-300 flex-shrink-0 flex flex-col justify-between border-r border-slate-800 transition-transform duration-300 ${
+            isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+          }`}>
+            <div>
+              <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white text-xl font-bold shadow-md shadow-emerald-900/50">
+                    <i className="fa-solid fa-user-shield"></i>
+                  </div>
+                  <div>
+                    <h1 className="font-bold text-white text-base leading-tight">SantriPay</h1>
+                    <p className="text-[11px] text-emerald-400 flex items-center gap-1 font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                      Real-Time Admin
+                    </p>
+                  </div>
+                </div>
+                <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white p-2">
+                  <i className="fa-solid fa-xmark text-lg"></i>
+                </button>
+              </div>
+
+              <nav className="p-3 space-y-1">
+                {[
+                  { id: 'dashboard', label: 'Dashboard', icon: 'fa-chart-pie' },
+                  { id: 'pembayaran', label: 'Pembayaran SPP', icon: 'fa-file-invoice-dollar' },
+                  { id: 'tunggakan', label: 'Tunggakan Santri', icon: 'fa-triangle-exclamation' },
+                  { id: 'santri', label: 'Data Santri', icon: 'fa-users' },
+                  { id: 'kas', label: 'Buku Kas Umum', icon: 'fa-wallet' },
+                  { id: 'laporan', label: 'Laporan Keuangan', icon: 'fa-file-lines' },
+                  { id: 'pengaturan', label: 'Pengaturan & Cloud', icon: 'fa-gear' }
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => handleSelectTab(item.id)}
+                    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-sm font-medium transition ${
+                      activeTab === item.id 
+                        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30 font-semibold' 
+                        : 'hover:bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <i className={`fa-solid ${item.icon} w-5 text-center text-base`}></i>
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </nav>
+            </div>
+
+            <div className="p-4 border-t border-slate-800 space-y-2">
+              <div className="bg-slate-800/90 p-3 rounded-xl border border-slate-700/60 flex items-center justify-between">
+                <div className="truncate pr-2">
+                  <p className="text-xs font-bold text-white truncate">{currentUser.name}</p>
+                  <p className="text-[10px] text-emerald-400 uppercase font-bold">Akses Bendahara</p>
+                </div>
+                <button onClick={handleLogout} className="bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white p-2 rounded-lg transition text-xs" title="Keluar">
+                  <i className="fa-solid fa-right-from-bracket"></i>
+                </button>
+              </div>
+
+              <button
+                onClick={() => fetchCloudData()}
+                disabled={isSyncing}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 p-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2"
+              >
+                <i className={`fa-solid fa-arrows-rotate ${isSyncing ? 'animate-spin' : ''}`}></i>
+                <span>{isSyncing ? 'Menarik Data...' : 'Sync Data Cloud'}</span>
+              </button>
+            </div>
+          </aside>
+
+          {/* Header Bar */}
+          <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+            {}
+            <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 sticky top-0 z-10 shadow-sm">
+              <div className="flex items-center space-x-3 min-w-0">
+                <button
+                  onClick={() => setIsMobileMenuOpen(true)}
+                  className="md:hidden p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 transition text-lg flex items-center justify-center"
+                >
+                  <i className="fa-solid fa-bars"></i>
+                </button>
+
+                <div className="truncate">
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900 truncate">
+                    {activeTab === 'dashboard' && 'Dashboard Overview Keuangan'}
+                    {activeTab === 'pembayaran' && 'Pencatatan SPP & Tagihan'}
+                    {activeTab === 'tunggakan' && 'Laporan Tunggakan Santri'}
+                    {activeTab === 'santri' && 'Manajemen Data Santri'}
+                    {activeTab === 'kas' && 'Kas Pemasukan & Pengeluaran'}
+                    {activeTab === 'laporan' && 'Laporan & Rekapitulasi'}
+                    {activeTab === 'pengaturan' && 'Pengaturan & Cloud Sync'}
+                  </h2>
+                  <p className="text-[11px] text-slate-500 truncate">{pesantren.nama}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                  <span className="hidden sm:inline">Live Auto-Sync (4s)</span>
+                </div>
+
+                <div className="bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5">
+                  <i className="fa-solid fa-vault text-emerald-400"></i>
+                  <span>Rp {saldoKas.toLocaleString('id-ID')}</span>
+                </div>
+              </div>
+            </header>
+
+            <div className="p-4 sm:p-6">
+              {activeTab === 'dashboard' && (
+                <DashboardView 
+                  totalPemasukan={totalPemasukan}
+                  totalPengeluaran={totalPengeluaran}
+                  saldoKas={saldoKas}
+                  santriList={santriList}
+                  transaksiList={transaksiList}
+                  setActiveTab={setActiveTab}
+                />
+              )}
+
+              {activeTab === 'pembayaran' && (
+                <PembayaranView 
+                  santriList={santriList}
+                  configTagihan={configTagihan}
+                  transaksiList={transaksiList}
+                  setTransaksiList={setTransaksiList}
+                  triggerPrintReceipt={triggerPrintReceipt}
+                  syncToGoogleSheets={syncToGoogleSheets}
+                  showToast={showToast}
+                  selectedSantriForPayment={selectedSantriForPayment}
+                  setSelectedSantriForPayment={setSelectedSantriForPayment}
+                  currentUser={currentUser}
+                />
+              )}
+
+              {activeTab === 'tunggakan' && (
+                <TunggakanView 
+                  santriList={santriList}
+                  transaksiList={transaksiList}
+                  configTagihan={configTagihan}
+                  pesantren={pesantren}
+                  handleQuickPayFromTunggakan={handleQuickPayFromTunggakan}
+                />
+              )}
+
+              {activeTab === 'santri' && (
+                <SantriView 
+                  santriList={santriList}
+                  setSantriList={setSantriList}
+                  syncToGoogleSheets={syncToGoogleSheets}
+                  showToast={showToast}
+                />
+              )}
+
+              {activeTab === 'kas' && (
+                <KasView 
+                  transaksiList={transaksiList}
+                  setTransaksiList={setTransaksiList}
+                  triggerPrintReceipt={triggerPrintReceipt}
+                  syncToGoogleSheets={syncToGoogleSheets}
+                  showToast={showToast}
+                  currentUser={currentUser}
+                />
+              )}
+
+              {activeTab === 'laporan' && (
+                <LaporanView 
+                  transaksiList={transaksiList}
+                  pesantren={pesantren}
+                />
+              )}
+
+              {activeTab === 'pengaturan' && (
+                <PengaturanView 
+                  pesantren={pesantren}
+                  setPesantren={setPesantren}
+                  configTagihan={configTagihan}
+                  setConfigTagihan={setConfigTagihan}
+                  googleSheetUrl={googleSheetUrl}
+                  setGoogleSheetUrl={setGoogleSheetUrl}
+                  fetchCloudData={fetchCloudData}
+                  isSyncing={isSyncing}
+                  showToast={showToast}
+                  users={users}
+                  setUsers={setUsers}
+                />
+              )}
+            </div>
+          </main>
+
+          {/* Printable Receipt */}
+          {printedReceipt && (
+            <div id="printable-area" className="hidden print:block font-mono text-slate-900 bg-white p-6 border rounded-xl max-w-md mx-auto">
+              <div className="text-center border-b pb-3 mb-3">
+                <h2 className="font-bold text-base uppercase">{pesantren.nama}</h2>
+                <p className="text-[10px]">{pesantren.alamat}</p>
+                <p className="text-[10px]">Telp: {pesantren.telepon}</p>
+              </div>
+
+              <div className="text-center my-3">
+                <span className="font-bold border-b border-black text-xs uppercase tracking-widest">BUKTI PEMBAYARAN RESMI</span>
+                <p className="text-[10px] text-slate-600 mt-1">No: {printedReceipt.noKwitansi}</p>
+              </div>
+
+              <table className="w-full text-xs space-y-1 mb-4">
+                <tbody>
+                  <tr><td className="py-1 text-slate-500">Tanggal</td><td className="py-1 font-semibold">: {printedReceipt.tanggal}</td></tr>
+                  {printedReceipt.namaSantri !== '-' && (
+                    <>
+                      <tr><td className="py-1 text-slate-500">Santri</td><td className="py-1 font-semibold">: {printedReceipt.namaSantri} ({printedReceipt.nis})</td></tr>
+                      <tr><td className="py-1 text-slate-500">Periode</td><td className="py-1 font-semibold">: {printedReceipt.bulan}</td></tr>
+                    </>
+                  )}
+                  <tr><td className="py-1 text-slate-500">Jenis Transaksi</td><td className="py-1 font-semibold">: {printedReceipt.kategori}</td></tr>
+                  <tr><td className="py-1 text-slate-500">Petugas</td><td className="py-1 font-semibold">: {printedReceipt.petugas || 'Bendahara Keuangan'}</td></tr>
+                  <tr><td className="py-1 text-slate-500">Keterangan</td><td className="py-1 font-semibold">: {printedReceipt.keterangan || '-'}</td></tr>
+                </tbody>
+              </table>
+
+              <div className="border-t border-b border-dashed border-black py-2 my-2 text-center">
+                <span className="text-xs">JUMLAH DIBAYAR:</span>
+                <div className="text-lg font-bold">Rp {Number(printedReceipt.jumlah).toLocaleString('id-ID')}</div>
+              </div>
+
+              <div className="flex justify-between text-[10px] mt-6 text-center">
+                <div>
+                  <p>Santri/Wali</p>
+                  <div className="h-10"></div>
+                  <p>( ........................... )</p>
+                </div>
+                <div>
+                  <p>Bendahara Keuangan</p>
+                  <div className="h-10"></div>
+                  <p>( {printedReceipt.petugas || pesantren.bendahara} )</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    function AdminLoginView({ onLogin, pesantren }) {
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        onLogin(username, password);
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl border border-slate-100">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-emerald-600 text-white rounded-2xl flex items-center justify-center text-3xl mx-auto mb-3 shadow-lg shadow-emerald-900/30">
+                <i className="fa-solid fa-user-shield"></i>
+              </div>
+              <h2 className="text-xl font-extrabold text-slate-900">Login Admin &amp; Keuangan</h2>
+              <p className="text-xs text-slate-500 mt-1">{pesantren.nama}</p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl mb-6 text-xs text-slate-600">
+              <p className="font-bold text-slate-800 mb-1"><i className="fa-solid fa-key text-emerald-600 mr-1"></i> Akun Login Default Admin:</p>
+              <div className="bg-white p-2.5 rounded border mt-2 text-[11px]">
+                <p>Username: <code className="bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-800">admin</code></p>
+                <p className="mt-1">Password: <code className="bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-800">admin123</code></p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Username Admin</label>
+                <input
+                  type="text"
+                  required
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm font-medium"
+                  placeholder="Masukkan username admin..."
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Kata Sandi (Password)</label>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm font-medium"
+                  placeholder="Masukkan password admin..."
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl text-sm transition shadow-lg shadow-emerald-900/20 flex items-center justify-center space-x-2"
+              >
+                <i className="fa-solid fa-right-to-bracket"></i>
+                <span>Masuk ke Dashboard Admin</span>
+              </button>
+            </form>
+
+            <div className="mt-6 text-center text-[11px] text-slate-400">
+              Aplikasi khusus Pengurus Keuangan &amp; Bendahara Pesantren
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function DashboardView({ totalPemasukan, totalPengeluaran, saldoKas, santriList, transaksiList, setActiveTab }) {
+      const chartRef = useRef(null);
+      const chartInstance = useRef(null);
+
+      useEffect(() => {
+        if (chartRef.current) {
+          if (chartInstance.current) chartInstance.current.destroy();
+          const ctx = chartRef.current.getContext('2d');
+          
+          chartInstance.current = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+              labels: ['Total Pemasukan', 'Total Pengeluaran'],
+              datasets: [{
+                data: [totalPemasukan, totalPengeluaran],
+                backgroundColor: ['#10b981', '#f43f5e'],
+                borderWidth: 0
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { legend: { position: 'bottom' } }
+            }
+          });
+        }
+        return () => {
+          if (chartInstance.current) chartInstance.current.destroy();
+        };
+      }, [totalPemasukan, totalPengeluaran]);
+
+      const activeSantriCount = santriList.filter(s => (s.status || 'aktif') === 'aktif').length;
+
+      return (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
+          <div className="lg:col-span-5 space-y-4 sm:space-y-6">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase">Saldo Kas</span>
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xs sm:text-sm">
+                    <i className="fa-solid fa-wallet"></i>
+                  </div>
+                </div>
+                <h3 className="text-xs sm:text-base font-extrabold text-slate-900 truncate">Rp {saldoKas.toLocaleString('id-ID')}</h3>
+              </div>
+
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase">Santri Aktif</span>
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-xs sm:text-sm">
+                    <i className="fa-solid fa-user-graduate"></i>
+                  </div>
+                </div>
+                <h3 className="text-xs sm:text-base font-extrabold text-slate-900 truncate">{activeSantriCount} Santri</h3>
+              </div>
+
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase">Pemasukan</span>
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center text-xs sm:text-sm">
+                    <i className="fa-solid fa-arrow-down-left"></i>
+                  </div>
+                </div>
+                <h3 className="text-xs sm:text-base font-extrabold text-emerald-600 truncate">Rp {totalPemasukan.toLocaleString('id-ID')}</h3>
+              </div>
+
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase">Pengeluaran</span>
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-xs sm:text-sm">
+                    <i className="fa-solid fa-arrow-up-right"></i>
+                  </div>
+                </div>
+                <h3 className="text-xs sm:text-base font-extrabold text-rose-600 truncate">Rp {totalPengeluaran.toLocaleString('id-ID')}</h3>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <h3 className="text-xs font-bold text-slate-700 uppercase mb-3 flex items-center space-x-2">
+                <i className="fa-solid fa-chart-pie text-emerald-600"></i>
+                <span>Rasio Pemasukan vs Pengeluaran</span>
+              </h3>
+              <div className="h-44 sm:h-48 relative">
+                <canvas ref={chartRef}></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-7 space-y-4 sm:space-y-6">
+            <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-5 sm:p-6 rounded-2xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold mb-1">Pencatatan Keuangan Pesantren</h3>
+                <p className="text-xs text-slate-300">Catat pembayaran SPP santri atau pengeluaran operasional hari ini.</p>
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button
+                  onClick={() => setActiveTab('pembayaran')}
+                  className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5"
+                >
+                  <i className="fa-solid fa-plus"></i>
+                  <span>Bayar SPP</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('kas')}
+                  className="flex-1 sm:flex-none bg-slate-700 hover:bg-slate-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5"
+                >
+                  <i className="fa-solid fa-pen-to-square"></i>
+                  <span>Input Kas</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between mb-3 border-b pb-3">
+                <h3 className="text-xs font-bold text-slate-800 uppercase">Transaksi Terakhir (Real-Time)</h3>
+                <button onClick={() => setActiveTab('laporan')} className="text-xs font-semibold text-emerald-600 hover:underline">Lihat Semua →</button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
+                    <tr>
+                      <th className="p-2.5">Tanggal</th>
+                      <th className="p-2.5">Kategori</th>
+                      <th className="p-2.5">Pihak / Santri</th>
+                      <th className="p-2.5">Input Oleh</th>
+                      <th className="p-2.5 text-right">Nominal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {transaksiList.slice().reverse().slice(0, 6).map(tx => (
+                      <tr key={tx.id} className="hover:bg-slate-50">
+                        <td className="p-2.5 text-slate-500 font-mono text-[11px]">{tx.tanggal}</td>
+                        <td className="p-2.5 font-medium">{tx.kategori}</td>
+                        <td className="p-2.5 text-slate-700">{tx.namaSantri !== '-' ? tx.namaSantri : (tx.keterangan || '-')}</td>
+                        <td className="p-2.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${tx.petugas?.includes('Ustazah') || tx.petugas?.includes('Pengajar') ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700'}`}>
+                            {tx.petugas || 'Bendahara'}
+                          </span>
+                        </td>
+                        <td className={`p-2.5 text-right font-bold ${tx.jenis === 'masuk' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {tx.jenis === 'masuk' ? '+' : '-'} Rp {Number(tx.jumlah).toLocaleString('id-ID')}
+                        </td>
+                      </tr>
+                    ))}
+                    {transaksiList.length === 0 && (
+                      <tr>
+                        <td colSpan="5" className="p-6 text-center text-slate-400 italic">Belum ada transaksi. Silakan catat transaksi pertama Anda.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function PembayaranView({ santriList, configTagihan, transaksiList, setTransaksiList, triggerPrintReceipt, syncToGoogleSheets, showToast, selectedSantriForPayment, setSelectedSantriForPayment, currentUser }) {
+      const activeSantriList = santriList.filter(s => (s.status || 'aktif') === 'aktif');
+      const [selectedSantriId, setSelectedSantriId] = useState(selectedSantriForPayment ? selectedSantriForPayment.id : '');
+      const [kategori, setKategori] = useState('SPP & Syahriyah');
+      const [bulan, setBulan] = useState('Agustus 2026');
+      const [nominal, setNominal] = useState(configTagihan.sppBulanan);
+      const [keterangan, setKeterangan] = useState('Pembayaran SPP Bulanan');
+
+      useEffect(() => {
+        if (selectedSantriForPayment) {
+          setSelectedSantriId(selectedSantriForPayment.id);
+        }
+      }, [selectedSantriForPayment]);
+
+      const selectedSantri = santriList.find(s => s.id === selectedSantriId);
+
+      useEffect(() => {
+        if (kategori === 'SPP & Syahriyah') setNominal(configTagihan.sppBulanan);
+        else if (kategori === 'Uang Makan') setNominal(configTagihan.uangMakan);
+        else if (kategori === 'Uang Kitab') setNominal(configTagihan.uangKitab);
+        else if (kategori === 'Uang Gedung') setNominal(configTagihan.uangGedung);
+      }, [kategori, configTagihan]);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!selectedSantri) {
+          showToast('Pilih santri terlebih dahulu!', 'error');
+          return;
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const kwitansiNo = `KW-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${Math.floor(100 + Math.random()*900)}`;
+
+        const newTx = {
+          id: 'TX' + Date.now(),
+          tanggal: dateStr,
+          jenis: 'masuk',
+          kategori: kategori,
+          santriId: selectedSantri.id,
+          nis: selectedSantri.nis,
+          namaSantri: selectedSantri.nama,
+          jumlah: Number(nominal),
+          bulan: bulan,
+          keterangan: keterangan,
+          noKwitansi: kwitansiNo,
+          petugas: currentUser.name || 'Bendahara Keuangan'
+        };
+
+        const updatedTx = [...transaksiList, newTx];
+        setTransaksiList(updatedTx);
+        localStorage.setItem('santri_transaksi_data', JSON.stringify(updatedTx));
+
+        if (syncToGoogleSheets) syncToGoogleSheets('add_tx', newTx);
+        showToast('Pembayaran berhasil dicatat!', 'success');
+        if (setSelectedSantriForPayment) setSelectedSantriForPayment(null);
+        triggerPrintReceipt(newTx);
+      };
+
+      return (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-1 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
+            <h3 className="text-base font-bold text-slate-900 mb-4 border-b pb-3 flex items-center space-x-2">
+              <i className="fa-solid fa-cash-register text-emerald-600"></i>
+              <span>Form Pembayaran SPP</span>
+            </h3>
+
+            <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Pilih Santri Aktif</label>
+                <select
+                  value={selectedSantriId}
+                  onChange={(e) => setSelectedSantriId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  required
+                >
+                  <option value="">-- Pilih Santri --</option>
+                  {activeSantriList.map(s => (
+                    <option key={s.id} value={s.id}>{s.nama} ({s.nis}) - {s.kelas}</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedSantri && (
+                <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-[11px] text-emerald-800 space-y-1">
+                  <p><span className="font-bold">Kelas:</span> {selectedSantri.kelas} | <span className="font-bold">Kamar:</span> {selectedSantri.kamar}</p>
+                  <p><span className="font-bold">Wali:</span> {selectedSantri.wali} ({selectedSantri.noHp})</p>
+                </div>
+              )}
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Kategori Tagihan</label>
+                <select
+                  value={kategori}
+                  onChange={(e) => setKategori(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                >
+                  <option value="SPP &amp; Syahriyah">SPP &amp; Syahriyah Bulanan</option>
+                  <option value="Uang Makan">Uang Makan</option>
+                  <option value="Uang Kitab">Uang Kitab &amp; Al-Qur'an</option>
+                  <option value="Uang Gedung">Uang Gedung / Pembangunan</option>
+                  <option value="Infaq / Donasi">Infaq Sukarela Santri</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Periode Bulan</label>
+                  <input
+                    type="text"
+                    value={bulan}
+                    onChange={(e) => setBulan(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    placeholder="Contoh: Agustus 2026"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Nominal (Rp)</label>
+                  <input
+                    type="number"
+                    value={nominal}
+                    onChange={(e) => setNominal(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Catatan / Keterangan</label>
+                <input
+                  type="text"
+                  value={keterangan}
+                  onChange={(e) => setKeterangan(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  placeholder="Keterangan tambahan..."
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition shadow-md shadow-emerald-900/20 flex items-center justify-center space-x-2 text-sm"
+              >
+                <i className="fa-solid fa-print"></i>
+                <span>Simpan &amp; Cetak Kuitansi</span>
+              </button>
+            </form>
+          </div>
+
+          <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 className="text-base font-bold text-slate-900 mb-4 border-b pb-3">Riwayat Pembayaran Santri</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-3">No Kwitansi</th>
+                    <th className="p-3">Nama Santri</th>
+                    <th className="p-3">Jenis</th>
+                    <th className="p-3">Petugas</th>
+                    <th className="p-3">Jumlah</th>
+                    <th className="p-3">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {transaksiList.filter(t => t.santriId).reverse().map(tx => (
+                    <tr key={tx.id} className="hover:bg-slate-50/80">
+                      <td className="p-3 font-mono text-slate-500">{tx.noKwitansi}</td>
+                      <td className="p-3 font-bold text-slate-900">{tx.namaSantri}</td>
+                      <td className="p-3">{tx.kategori}</td>
+                      <td className="p-3 text-slate-600">{tx.petugas || 'Bendahara'}</td>
+                      <td className="p-3 font-bold text-emerald-600">Rp {Number(tx.jumlah).toLocaleString('id-ID')}</td>
+                      <td className="p-3">
+                        <button
+                          onClick={() => triggerPrintReceipt(tx)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition"
+                        >
+                          <i className="fa-solid fa-print mr-1"></i> Cetak
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {transaksiList.filter(t => t.santriId).length === 0 && (
+                    <tr>
+                      <td colSpan="6" className="p-6 text-center text-slate-400 italic">Belum ada data pembayaran santri.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function TunggakanView({ santriList, transaksiList, configTagihan, pesantren, handleQuickPayFromTunggakan }) {
+      const [selectedBulan, setSelectedBulan] = useState('Agustus 2026');
+      
+      const activeSantri = santriList.filter(s => (s.status || 'aktif') === 'aktif' && !s.beasiswa);
+
+      const santriBelumBayar = activeSantri.filter(santri => {
+        const sudahBayar = transaksiList.some(tx => 
+          tx.santriId === santri.id && 
+          (tx.kategori === 'SPP & Syahriyah' || tx.kategori === 'SPP &amp; Syahriyah') && 
+          tx.bulan.toLowerCase().trim() === selectedBulan.toLowerCase().trim()
+        );
+        return !sudahBayar;
+      });
+
+      const totalPotensiTunggakan = santriBelumBayar.length * configTagihan.sppBulanan;
+
+      const sendWAWhatsApp = (santri) => {
+        let phone = (santri.noHp || '').replace(/[^0-9]/g, '');
+        if (phone.startsWith('0')) {
+          phone = '62' + phone.slice(1);
+        }
+
+        const msg = `Assalamu'alaikum Wr. Wb. Yth. Bapak/Ibu ${santri.wali} (Wali dari ${santri.nama}).\n\nKami menginformasikan tagihan SPP & Syahriyah bulan *${selectedBulan}* untuk ananda *${santri.nama}* (${santri.kelas}) di ${pesantren.nama} sebesar *Rp ${Number(configTagihan.sppBulanan).toLocaleString('id-ID')}* belum tercatat lunas.\n\nMohon untuk menyelesaikan pembayaran. Terima kasih.\nWassalamu'alaikum Wr. Wb.\n- Bendahara ${pesantren.nama}`;
+
+        window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+      };
+
+      return (
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                <i className="fa-solid fa-circle-exclamation text-amber-500"></i>
+                <span>Laporan Tunggakan SPP Santri</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">Pantau santri aktif yang belum melunasi kewajiban SPP bulanan.</p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center space-x-2">
+                <label className="text-xs font-semibold text-slate-600">Pilih Periode Bulan:</label>
+                <input
+                  type="text"
+                  value={selectedBulan}
+                  onChange={(e) => setSelectedBulan(e.target.value)}
+                  className="border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Contoh: Agustus 2026"
+                />
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl text-amber-800 text-xs font-bold">
+                Tunggakan: {santriBelumBayar.length} Santri (Rp {totalPotensiTunggakan.toLocaleString('id-ID')})
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b bg-slate-50 flex items-center justify-between">
+              <span className="font-bold text-xs text-slate-700">Daftar Santri Belum Bayar SPP ({selectedBulan})</span>
+              <span className="text-[11px] text-slate-500">Menampilkan {santriBelumBayar.length} dari {activeSantri.length} santri aktif</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-100 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-3">NIS</th>
+                    <th className="p-3">Nama Santri</th>
+                    <th className="p-3">Kelas / Kamar</th>
+                    <th className="p-3">Wali Santri</th>
+                    <th className="p-3">No. WhatsApp</th>
+                    <th className="p-3">Tagihan SPP</th>
+                    <th className="p-3 text-center">Aksi Pengingat</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {santriBelumBayar.map(santri => (
+                    <tr key={santri.id} className="hover:bg-slate-50/80">
+                      <td className="p-3 font-mono text-slate-600">{santri.nis}</td>
+                      <td className="p-3 font-bold text-slate-900">{santri.nama}</td>
+                      <td className="p-3">{santri.kelas} ({santri.kamar})</td>
+                      <td className="p-3">{santri.wali}</td>
+                      <td className="p-3 text-slate-600">{santri.noHp}</td>
+                      <td className="p-3 font-bold text-rose-600">Rp {Number(configTagihan.sppBulanan).toLocaleString('id-ID')}</td>
+                      <td className="p-3 text-center space-x-2">
+                        <button
+                          onClick={() => sendWAWhatsApp(santri)}
+                          className="bg-emerald-500 hover:bg-emerald-600 text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition inline-flex items-center space-x-1"
+                        >
+                          <i className="fa-brands fa-whatsapp text-sm"></i>
+                          <span>Kirim WA</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleQuickPayFromTunggakan(santri)}
+                          className="bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1 rounded-lg text-[11px] font-semibold transition"
+                        >
+                          Bayar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {santriBelumBayar.length === 0 && (
+                    <tr>
+                      <td colSpan="7" className="p-8 text-center text-emerald-600 font-medium">
+                        <i className="fa-solid fa-circle-check text-2xl mb-2 block"></i>
+                        <span>Alhamdulillah! Seluruh santri aktif telah melunasi SPP untuk bulan {selectedBulan}.</span>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function SantriView({ santriList, setSantriList, syncToGoogleSheets, showToast }) {
+      const [showModal, setShowModal] = useState(false);
+      const [editingSantri, setEditingSantri] = useState(null);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [statusFilter, setStatusFilter] = useState('semua');
+
+      const [formData, setFormData] = useState({
+        nis: '', nama: '', kelas: '10 A - Ula', kamar: 'Abu Bakar 01', wali: '', noHp: '', beasiswa: false, status: 'aktif'
+      });
+
+      const filteredSantri = santriList.filter(s => {
+        const matchesSearch = s.nama.toLowerCase().includes(searchQuery.toLowerCase()) || s.nis.includes(searchQuery);
+        const currentStatus = s.status || 'aktif';
+        if (statusFilter === 'aktif') return matchesSearch && currentStatus === 'aktif';
+        if (statusFilter === 'tidak_aktif') return matchesSearch && currentStatus === 'tidak_aktif';
+        return matchesSearch;
+      });
+
+      const handleOpenAddModal = () => {
+        setEditingSantri(null);
+        setFormData({ nis: '', nama: '', kelas: '10 A - Ula', kamar: 'Abu Bakar 01', wali: '', noHp: '', beasiswa: false, status: 'aktif' });
+        setShowModal(true);
+      };
+
+      const handleOpenEditModal = (santri) => {
+        setEditingSantri(santri);
+        setFormData({
+          nis: santri.nis,
+          nama: santri.nama,
+          kelas: santri.kelas,
+          kamar: santri.kamar,
+          wali: santri.wali,
+          noHp: santri.noHp,
+          beasiswa: santri.beasiswa || false,
+          status: santri.status || 'aktif'
+        });
+        setShowModal(true);
+      };
+
+      const handleSaveSantri = (e) => {
+        e.preventDefault();
+        if (editingSantri) {
+          const updatedList = santriList.map(s => s.id === editingSantri.id ? { ...s, ...formData } : s);
+          setSantriList(updatedList);
+          localStorage.setItem('santri_list_data', JSON.stringify(updatedList));
+          if (syncToGoogleSheets) syncToGoogleSheets('edit_santri', { id: editingSantri.id, ...formData });
+          showToast('Data santri berhasil diperbarui!', 'success');
+        } else {
+          const newSantri = {
+            ...formData,
+            id: 'S' + String(santriList.length + 1).padStart(3, '0')
+          };
+          const updatedList = [...santriList, newSantri];
+          setSantriList(updatedList);
+          localStorage.setItem('santri_list_data', JSON.stringify(updatedList));
+          if (syncToGoogleSheets) syncToGoogleSheets('add_santri', newSantri);
+          showToast('Data santri baru ditambahkan!', 'success');
+        }
+        setShowModal(false);
+      };
+
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+              <div className="relative w-full sm:w-64">
+                <i className="fa-solid fa-magnifying-glass absolute left-3 top-3 text-slate-400 text-xs"></i>
+                <input
+                  type="text"
+                  placeholder="Cari nama atau NIS santri..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-semibold w-full sm:w-auto">
+                <button
+                  onClick={() => setStatusFilter('semua')}
+                  className={`px-3 py-1 rounded-lg transition ${statusFilter === 'semua' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Semua ({santriList.length})
+                </button>
+                <button
+                  onClick={() => setStatusFilter('aktif')}
+                  className={`px-3 py-1 rounded-lg transition ${statusFilter === 'aktif' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Aktif ({santriList.filter(s => (s.status || 'aktif') === 'aktif').length})
+                </button>
+                <button
+                  onClick={() => setStatusFilter('tidak_aktif')}
+                  className={`px-3 py-1 rounded-lg transition ${statusFilter === 'tidak_aktif' ? 'bg-white text-rose-700 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Alumni ({santriList.filter(s => s.status === 'tidak_aktif').length})
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={handleOpenAddModal}
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-2"
+            >
+              <i className="fa-solid fa-plus"></i>
+              <span>Tambah Santri Baru</span>
+            </button>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-3">NIS</th>
+                    <th className="p-3">Nama Santri</th>
+                    <th className="p-3">Kelas</th>
+                    <th className="p-3">Kamar</th>
+                    <th className="p-3">Wali Santri</th>
+                    <th className="p-3">No. HP Wali</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3">Beasiswa</th>
+                    <th className="p-3 text-center">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredSantri.map(santri => (
+                    <tr key={santri.id} className="hover:bg-slate-50/80">
+                      <td className="p-3 font-mono text-slate-600">{santri.nis}</td>
+                      <td className="p-3 font-bold text-slate-900">{santri.nama}</td>
+                      <td className="p-3">{santri.kelas}</td>
+                      <td className="p-3">{santri.kamar}</td>
+                      <td className="p-3">{santri.wali}</td>
+                      <td className="p-3 text-slate-600">{santri.noHp}</td>
+                      <td className="p-3">
+                        {(santri.status || 'aktif') === 'aktif' ? (
+                          <span className="bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full text-[10px] font-bold">Aktif</span>
+                        ) : (
+                          <span className="bg-slate-100 text-slate-500 px-2.5 py-0.5 rounded-full text-[10px] font-bold">Tidak Aktif</span>
+                        )}
+                      </td>
+                      <td className="p-3">
+                        {santri.beasiswa ? (
+                          <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full text-[10px] font-bold">Beasiswa</span>
+                        ) : (
+                          <span className="text-slate-400 text-[10px]">-</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <button
+                          onClick={() => handleOpenEditModal(santri)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition"
+                        >
+                          <i className="fa-solid fa-pen-to-square mr-1"></i> Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredSantri.length === 0 && (
+                    <tr>
+                      <td colSpan="9" className="p-6 text-center text-slate-400 italic">Tidak ada data santri ditemukan.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {showModal && (
+            <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+                <div className="flex items-center justify-between border-b pb-3">
+                  <h3 className="font-bold text-slate-900 text-sm">
+                    {editingSantri ? 'Edit Data Santri' : 'Tambah Santri Baru'}
+                  </h3>
+                  <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 text-lg">
+                    <i className="fa-solid fa-xmark"></i>
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveSantri} className="space-y-3 text-xs">
+                  <div>
+                    <label className="block font-semibold mb-1">NIS (Nomor Induk Santri)</label>
+                    <input type="text" required value={formData.nis} onChange={e => setFormData({...formData, nis: e.target.value})} className="w-full border rounded-xl p-2.5" placeholder="Contoh: 2026001" />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Nama Lengkap Santri</label>
+                    <input type="text" required value={formData.nama} onChange={e => setFormData({...formData, nama: e.target.value})} className="w-full border rounded-xl p-2.5" placeholder="Nama lengkap..." />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-semibold mb-1">Kelas</label>
+                      <input type="text" value={formData.kelas} onChange={e => setFormData({...formData, kelas: e.target.value})} className="w-full border rounded-xl p-2.5" />
+                    </div>
+                    <div>
+                      <label className="block font-semibold mb-1">Kamar Asrama</label>
+                      <input type="text" value={formData.kamar} onChange={e => setFormData({...formData, kamar: e.target.value})} className="w-full border rounded-xl p-2.5" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Nama Wali Santri</label>
+                    <input type="text" value={formData.wali} onChange={e => setFormData({...formData, wali: e.target.value})} className="w-full border rounded-xl p-2.5" />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">No. HP / WhatsApp Wali</label>
+                    <input type="text" value={formData.noHp} onChange={e => setFormData({...formData, noHp: e.target.value})} className="w-full border rounded-xl p-2.5" placeholder="08xxxxxxxxxx" />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="block font-semibold mb-1">Status Keaktifan</label>
+                      <select
+                        value={formData.status}
+                        onChange={e => setFormData({...formData, status: e.target.value})}
+                        className="w-full border rounded-xl p-2.5 bg-slate-50 font-semibold"
+                      >
+                        <option value="aktif">Santri Aktif</option>
+                        <option value="tidak_aktif">Tidak Aktif / Alumni</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center space-x-2 pt-5">
+                      <input type="checkbox" id="beasiswa" checked={formData.beasiswa} onChange={e => setFormData({...formData, beasiswa: e.target.checked})} className="rounded text-emerald-600 focus:ring-emerald-500" />
+                      <label htmlFor="beasiswa" className="font-semibold text-slate-700 text-[11px]">Beasiswa / Yatim</label>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end space-x-2 pt-3 border-t">
+                    <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border rounded-xl font-semibold text-slate-600">Batal</button>
+                    <button type="submit" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold">Simpan Santri</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function KasView({ transaksiList, setTransaksiList, triggerPrintReceipt, syncToGoogleSheets, showToast, currentUser }) {
+      const [jenis, setJenis] = useState('keluar');
+      const [kategori, setKategori] = useState('Operasional Dapur');
+      const [jumlah, setJumlah] = useState('');
+      const [keterangan, setKeterangan] = useState('');
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const prefix = jenis === 'masuk' ? 'KW' : 'KK';
+        const kwitansiNo = `${prefix}-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${Math.floor(100 + Math.random()*900)}`;
+
+        const newTx = {
+          id: 'TX' + Date.now(),
+          tanggal: dateStr,
+          jenis: jenis,
+          kategori: kategori,
+          santriId: '',
+          nis: '-',
+          namaSantri: '-',
+          jumlah: Number(jumlah),
+          bulan: '-',
+          keterangan: keterangan,
+          noKwitansi: kwitansiNo,
+          petugas: currentUser.name || 'Bendahara Keuangan'
+        };
+
+        const updatedTx = [...transaksiList, newTx];
+        setTransaksiList(updatedTx);
+        localStorage.setItem('santri_transaksi_data', JSON.stringify(updatedTx));
+
+        if (syncToGoogleSheets) syncToGoogleSheets('add_tx', newTx);
+        setJumlah('');
+        setKeterangan('');
+        showToast('Transaksi Kas berhasil disimpan!', 'success');
+      };
+
+      return (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-1 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
+            <h3 className="text-base font-bold text-slate-900 mb-4 border-b pb-3 flex items-center space-x-2">
+              <i className="fa-solid fa-pen-to-square text-emerald-600"></i>
+              <span>Pencatatan Kas Umum</span>
+            </h3>
+
+            <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Jenis Transaksi</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setJenis('masuk'); setKategori('Infaq / Donasi'); }}
+                    className={`py-2 rounded-xl font-bold transition border ${
+                      jenis === 'masuk' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    + Kas Masuk
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setJenis('keluar'); setKategori('Operasional Dapur'); }}
+                    className={`py-2 rounded-xl font-bold transition border ${
+                      jenis === 'keluar' ? 'bg-rose-600 text-white border-rose-600' : 'bg-slate-50 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    - Kas Keluar
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Kategori Transaksi</label>
+                <select
+                  value={kategori}
+                  onChange={(e) => setKategori(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 bg-slate-50 focus:outline-none"
+                >
+                  {jenis === 'masuk' ? (
+                    <>
+                      <option value="Infaq / Donasi">Infaq / Donasi Umum</option>
+                      <option value="Bantuan Pemerintah / Hibah">Bantuan Government / Hibah</option>
+                      <option value="Hasil Usaha Pesantren">Hasil Usaha Pesantren</option>
+                      <option value="Pemasukan Lainnya">Pemasukan Lainnya</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Operasional Dapur">Operasional Dapur &amp; Logistik</option>
+                      <option value="Bisyarah Ustadz">Bisyarah / Gaji Ustadz &amp; Pengajar</option>
+                      <option value="Listrik &amp; Air">Listrik, Air &amp; WiFi</option>
+                      <option value="Pemeliharaan Bangunan">Pemeliharaan Bangunan &amp; Fasilitas</option>
+                      <option value="Pengeluaran Lainnya">Pengeluaran Lainnya</option>
+                    </>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Nominal (Rp)</label>
+                <input
+                  type="number"
+                  value={jumlah}
+                  onChange={(e) => setJumlah(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 font-bold text-slate-900 focus:outline-none"
+                  placeholder="Masukkan nominal..."
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Rincian / Keterangan</label>
+                <textarea
+                  value={keterangan}
+                  onChange={(e) => setKeterangan(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 focus:outline-none"
+                  rows="3"
+                  placeholder="Rincian penggunaan atau sumber dana..."
+                  required
+                ></textarea>
+              </div>
+
+              <button
+                type="submit"
+                className={`w-full text-white font-bold py-3 rounded-xl transition shadow-md ${
+                  jenis === 'masuk' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-900/20' : 'bg-rose-600 hover:bg-rose-700 shadow-rose-900/20'
+                }`}
+              >
+                Simpan Transaksi Kas
+              </button>
+            </form>
+          </div>
+
+          <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 className="text-base font-bold text-slate-900 mb-4 border-b pb-3">Riwayat Kas Pemasukan &amp; Pengeluaran</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
+                  <tr>
+                    <th className="p-3">Tanggal</th>
+                    <th className="p-3">No. Bukti</th>
+                    <th className="p-3">Kategori</th>
+                    <th className="p-3">Petugas</th>
+                    <th className="p-3">Keterangan</th>
+                    <th className="p-3">Jumlah</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {transaksiList.slice().reverse().map(tx => (
+                    <tr key={tx.id} className="hover:bg-slate-50/80">
+                      <td className="p-3 font-mono text-slate-500">{tx.tanggal}</td>
+                      <td className="p-3 font-mono text-slate-500">{tx.noKwitansi}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          tx.jenis === 'masuk' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                        }`}>
+                          {tx.kategori}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-600 font-medium">{tx.petugas || 'Bendahara'}</td>
+                      <td className="p-3 text-slate-700">{tx.keterangan}</td>
+                      <td className={`p-3 font-bold ${tx.jenis === 'masuk' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {tx.jenis === 'masuk' ? '+' : '-'} Rp {Number(tx.jumlah).toLocaleString('id-ID')}
+                      </td>
+                    </tr>
+                  ))}
+                  {transaksiList.length === 0 && (
+                    <tr>
+                      <td colSpan="6" className="p-6 text-center text-slate-400 italic">Belum ada transaksi kas recorded.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function LaporanView({ transaksiList, pesantren }) {
+      const exportToCSV = () => {
+        const headers = ["ID,Tanggal,No Kwitansi,Jenis,Kategori,Nama Santri,NIS,Jumlah,Bulan,Keterangan,Petugas"];
+        const rows = transaksiList.map(t => 
+          `"${t.id}","${t.tanggal}","${t.noKwitansi}","${t.jenis}","${t.kategori}","${t.namaSantri}","${t.nis}",${t.jumlah},"${t.bulan}","${t.keterangan}","${t.petugas || '-'}"`
+        );
+        const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].join("\n");
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `Laporan_Keuangan_Pesantren_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      return (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Laporan Rekapitulasi Keuangan</h3>
+              <p className="text-xs text-slate-500">Unduh atau rekap seluruh data transaksi keuangan pesantren.</p>
+            </div>
+
+            <button
+              onClick={exportToCSV}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition flex items-center space-x-2"
+            >
+              <i className="fa-solid fa-file-excel"></i>
+              <span>Export ke Excel / CSV</span>
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-100 text-slate-700 uppercase font-bold">
+                <tr>
+                  <th className="p-3">Tanggal</th>
+                  <th className="p-3">No. Kwitansi</th>
+                  <th className="p-3">Jenis</th>
+                  <th className="p-3">Kategori</th>
+                  <th className="p-3">Nama Santri / Pihak</th>
+                  <th className="p-3">Input Oleh</th>
+                  <th className="p-3 text-right">Jumlah (Rp)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {transaksiList.map(tx => (
+                  <tr key={tx.id} className="hover:bg-slate-50">
+                    <td className="p-3 font-mono text-slate-600">{tx.tanggal}</td>
+                    <td className="p-3 font-mono text-slate-500">{tx.noKwitansi}</td>
+                    <td className="p-3 uppercase font-semibold text-[10px]">{tx.jenis}</td>
+                    <td className="p-3">{tx.kategori}</td>
+                    <td className="p-3 font-medium">{tx.namaSantri !== '-' ? tx.namaSantri : '-'}</td>
+                    <td className="p-3 text-slate-600">{tx.petugas || 'Bendahara'}</td>
+                    <td className={`p-3 text-right font-bold ${tx.jenis === 'masuk' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {tx.jenis === 'masuk' ? '+' : '-'} {Number(tx.jumlah).toLocaleString('id-ID')}
+                    </td>
+                  </tr>
+                ))}
+                {transaksiList.length === 0 && (
+                  <tr>
+                    <td colSpan="7" className="p-6 text-center text-slate-400 italic">Belum ada data laporan keuangan.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function PengaturanView({ pesantren, setPesantren, configTagihan, setConfigTagihan, googleSheetUrl, setGoogleSheetUrl, fetchCloudData, isSyncing, showToast, users, setUsers }) {
+      const [copiedCode, setCopiedCode] = useState(false);
+
+      const [adminPass, setAdminPass] = useState(users.find(u => u.role === 'admin')?.password || '');
+      const [ustazahPass, setUstazahPass] = useState(users.find(u => u.role === 'ustazah')?.password || '');
+
+      const handleSaveSecurity = (e) => {
+        e.preventDefault();
+        const updatedUsers = users.map(u => {
+          if (u.role === 'admin') return { ...u, password: adminPass };
+          if (u.role === 'ustazah') return { ...u, password: ustazahPass };
+          return u;
+        });
+        setUsers(updatedUsers);
+        showToast('Password Admin & Ustazah berhasil diperbarui!', 'success');
+      };
+
+      const scriptCode = `function doGet(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var santriSheet = ss.getSheetByName('Santri');
+  var txSheet = ss.getSheetByName('Transaksi');
+  
+  var santriList = [];
+  if (santriSheet && santriSheet.getLastRow() > 1) {
+    var data = santriSheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      santriList.push({
+        id: String(data[i][0]),
+        nis: String(data[i][1]),
+        nama: String(data[i][2]),
+        kelas: String(data[i][3]),
+        kamar: String(data[i][4]),
+        wali: String(data[i][5]),
+        noHp: String(data[i][6]),
+        beasiswa: data[i][7] === 'Ya' || data[i][7] === true,
+        status: String(data[i][8] || 'aktif')
+      });
+    }
+  }
+  
+  var transaksiList = [];
+  if (txSheet && txSheet.getLastRow() > 1) {
+    var data = txSheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      transaksiList.push({
+        id: String(data[i][0]),
+        tanggal: String(data[i][1]),
+        noKwitansi: String(data[i][2]),
+        jenis: String(data[i][3]),
+        kategori: String(data[i][4]),
+        namaSantri: String(data[i][5]),
+        nis: String(data[i][6]),
+        jumlah: Number(data[i][7]),
+        bulan: String(data[i][8]),
+        keterangan: String(data[i][9]),
+        petugas: String(data[i][10] || ''),
+        santriId: String(data[i][11] || '')
+      });
+    }
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({
+    status: 'success',
+    santriList: santriList,
+    transaksiList: transaksiList
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  try {
+    var contents = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    if (contents.action === 'add_tx') {
+      var sheet = ss.getSheetByName('Transaksi') || ss.insertSheet('Transaksi');
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(['ID', 'Tanggal', 'No Kwitansi', 'Jenis', 'Kategori', 'Nama Santri', 'NIS', 'Jumlah', 'Bulan', 'Keterangan', 'Petugas', 'SantriID']);
+      }
+      var tx = contents.data;
+      sheet.appendRow([tx.id, tx.tanggal, tx.noKwitansi, tx.jenis, tx.kategori, tx.namaSantri, tx.nis, tx.jumlah, tx.bulan, tx.keterangan, tx.petugas || '', tx.santriId || '']);
+    } 
+    else if (contents.action === 'add_santri') {
+      var sheet = ss.getSheetByName('Santri') || ss.insertSheet('Santri');
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(['ID', 'NIS', 'Nama', 'Kelas', 'Kamar', 'Wali', 'No HP', 'Beasiswa', 'Status']);
+      }
+      var s = contents.data;
+      sheet.appendRow([s.id, s.nis, s.nama, s.kelas, s.kamar, s.wali, s.noHp, s.beasiswa ? 'Ya' : 'Tidak', s.status || 'aktif']);
+    }
+    else if (contents.action === 'edit_santri') {
+      var sheet = ss.getSheetByName('Santri') || ss.insertSheet('Santri');
+      var data = sheet.getDataRange().getValues();
+      var s = contents.data;
+      var found = false;
+      for (var i = 1; i < data.length; i++) {
+        if (String(data[i][0]) === String(s.id)) {
+          sheet.getRange(i + 1, 1, 1, 9).setValues([[s.id, s.nis, s.nama, s.kelas, s.kamar, s.wali, s.noHp, s.beasiswa ? 'Ya' : 'Tidak', s.status || 'aktif']]);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        sheet.appendRow([s.id, s.nis, s.nama, s.kelas, s.kamar, s.wali, s.noHp, s.beasiswa ? 'Ya' : 'Tidak', s.status || 'aktif']);
+      }
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+      const handleCopyCode = () => {
+        const textarea = document.createElement('textarea');
+        textarea.value = scriptCode;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        setCopiedCode(true);
+        setTimeout(() => setCopiedCode(false), 2000);
+      };
+
+      return (
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 className="text-base font-bold text-slate-900 mb-4 border-b pb-3 flex items-center space-x-2">
+              <i className="fa-solid fa-lock text-emerald-600"></i>
+              <span>Keamanan &amp; Kata Sandi Login Aplikasi</span>
+            </h3>
+
+            <form onSubmit={handleSaveSecurity} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <label className="block font-bold text-slate-800 mb-1">
+                  <i className="fa-solid fa-user-shield text-emerald-600 mr-1"></i> Kata Sandi Aplikasi Admin
+                </label>
+                <p className="text-[11px] text-slate-500 mb-2">Username: <span className="font-mono font-bold">admin</span></p>
+                <input
+                  type="text"
+                  required
+                  value={adminPass}
+                  onChange={e => setAdminPass(e.target.value)}
+                  className="w-full border rounded-xl p-2.5 font-mono font-bold text-slate-800"
+                />
+              </div>
+
+              <div className="bg-purple-50 p-4 rounded-xl border border-purple-200">
+                <label className="block font-bold text-purple-900 mb-1">
+                  <i className="fa-solid fa-door-open text-purple-600 mr-1"></i> Kata Sandi Aplikasi Ustazah
+                </label>
+                <p className="text-[11px] text-purple-700 mb-2">Username: <span className="font-mono font-bold">ustazah</span></p>
+                <input
+                  type="text"
+                  required
+                  value={ustazahPass}
+                  onChange={e => setUstazahPass(e.target.value)}
+                  className="w-full border rounded-xl p-2.5 font-mono font-bold text-purple-900"
+                />
+              </div>
+
+              <div className="md:col-span-2 flex justify-end">
+                <button
+                  type="submit"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs"
+                >
+                  <i className="fa-solid fa-floppy-disk mr-1"></i> Simpan Kata Sandi
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center space-x-3 mb-4 border-b pb-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-xl">
+                <i className="fa-solid fa-cloud-arrow-up"></i>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Integrasi Cloud Google Sheets</h3>
+                <p className="text-xs text-slate-500">Koneksi otomatis ke Google Sheets untuk sync data real-time.</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">Google Apps Script Web App URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={googleSheetUrl}
+                    onChange={(e) => setGoogleSheetUrl(e.target.value)}
+                    className="flex-1 border border-slate-300 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono"
+                  />
+                  <button
+                    onClick={() => fetchCloudData()}
+                    disabled={isSyncing}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-3 rounded-xl text-xs transition flex items-center space-x-2 whitespace-nowrap"
+                  >
+                    <i className={`fa-solid fa-arrows-rotate ${isSyncing ? 'animate-spin' : ''}`}></i>
+                    <span>{isSyncing ? 'Menarik...' : 'Sync Cloud'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 text-slate-200 p-4 rounded-xl text-xs space-y-2">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                  <span className="font-mono text-emerald-400">Google Apps Script Code.gs</span>
+                  <button
+                    onClick={handleCopyCode}
+                    className="bg-slate-800 hover:bg-slate-700 text-white px-2.5 py-1 rounded text-xs transition"
+                  >
+                    {copiedCode ? '✓ Copied!' : 'Copy Script'}
+                  </button>
+                </div>
+                <pre className="font-mono overflow-x-auto text-[11px] text-slate-300 leading-relaxed max-h-48">{scriptCode}</pre>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 className="text-base font-bold text-slate-900 mb-4 border-b pb-3">Konfigurasi Tagihan Default (Rp)</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">SPP &amp; Syahriyah</label>
+                <input
+                  type="number"
+                  value={configTagihan.sppBulanan}
+                  onChange={e => setConfigTagihan({...configTagihan, sppBulanan: Number(e.target.value)})}
+                  className="w-full border rounded-xl p-2.5 font-bold text-slate-800"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Uang Makan</label>
+                <input
+                  type="number"
+                  value={configTagihan.uangMakan}
+                  onChange={e => setConfigTagihan({...configTagihan, uangMakan: Number(e.target.value)})}
+                  className="w-full border rounded-xl p-2.5 font-bold text-slate-800"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Uang Kitab</label>
+                <input
+                  type="number"
+                  value={configTagihan.uangKitab}
+                  onChange={e => setConfigTagihan({...configTagihan, uangKitab: Number(e.target.value)})}
+                  className="w-full border rounded-xl p-2.5 font-bold text-slate-800"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Uang Gedung</label>
+                <input
+                  type="number"
+                  value={configTagihan.uangGedung}
+                  onChange={e => setConfigTagihan({...configTagihan, uangGedung: Number(e.target.value)})}
+                  className="w-full border rounded-xl p-2.5 font-bold text-slate-800"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
